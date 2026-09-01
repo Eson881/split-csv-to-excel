@@ -28,7 +28,7 @@
       line-height: 1.55;
     }
     .wrap {
-      max-width: 760px;
+      max-width: 840px;
       margin: 0 auto;
       padding: 28px 20px 64px;
     }
@@ -72,6 +72,24 @@
       background: var(--accent);
       color: #fff;
     }
+    .modes {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .modes button {
+      flex: 1;
+      background: #ece6da;
+      color: var(--ink);
+    }
+    .modes button:hover { background: #e0d8c8; }
+    .modes button.active {
+      background: var(--accent);
+      color: #fff;
+    }
+    .modes button.active:hover { background: var(--accent-2); }
+    body[data-mode="split"] .only-dup { display: none; }
+    body[data-mode="dup"] .only-split { display: none; }
     .card {
       background: var(--card);
       border: 1px solid var(--line);
@@ -206,6 +224,72 @@
     }
     .status.err { background: #fdeeee; color: var(--danger); }
     .status.ok { background: #e7f4ee; color: var(--ok); }
+    .report {
+      display: none;
+      margin-top: 18px;
+      padding: 16px;
+      border-radius: 12px;
+      background: #fff;
+      border: 1px solid var(--line);
+    }
+    .report.show { display: block; }
+    .report h2 {
+      font-size: 18px;
+      margin: 0 0 12px;
+    }
+    .summary-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .pill {
+      background: #eef6f2;
+      border: 1px solid #cfe0d7;
+      border-radius: 999px;
+      padding: 4px 12px;
+      font-size: 13px;
+      font-weight: 650;
+    }
+    .report-ok {
+      color: var(--ok);
+      font-weight: 700;
+      margin: 8px 0 0;
+    }
+    .fail-box {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: #fdeeee;
+      color: var(--danger);
+      font-size: 13px;
+    }
+    .fail-box ul { margin: 8px 0 0; padding-left: 1.2em; }
+    .dup-block { margin-top: 16px; }
+    .dup-block h3 {
+      font-size: 15px;
+      margin: 0 0 8px;
+    }
+    .dup-item {
+      padding: 8px 10px;
+      border-top: 1px solid var(--line);
+      font-size: 13px;
+    }
+    .dup-key {
+      font-weight: 650;
+      word-break: break-all;
+    }
+    .dup-meta {
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 2px;
+      word-break: break-all;
+    }
+    .dup-more {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+    }
     .bar {
       margin-top: 12px;
       height: 10px;
@@ -238,7 +322,7 @@
     fieldset:disabled { opacity: 0.55; }
   </style>
 </head>
-<body>
+<body data-mode="split">
   <div class="wrap">
     <div class="top">
       <div class="top-text">
@@ -251,13 +335,17 @@
       </div>
     </div>
     <div class="card">
+      <div class="modes" role="tablist">
+        <button type="button" id="modeSplit" role="tab" aria-selected="true"></button>
+        <button type="button" id="modeDup" role="tab" aria-selected="false"></button>
+      </div>
       <div id="drop" class="drop" role="button" tabindex="0">
         <div class="drop-title" id="dropTitle"></div>
         <div class="drop-sub" id="dropSub"></div>
         <button id="pick" type="button"></button>
       </div>
       <fieldset id="settings">
-        <div class="controls">
+        <div class="controls only-split">
           <div>
             <div class="field-label" id="rowsLabel"></div>
             <div class="row-picks">
@@ -276,6 +364,12 @@
             <span id="headerLabel"></span>
           </label>
         </div>
+        <div class="controls only-dup">
+          <label class="check">
+            <input id="dupHeader" type="checkbox" checked />
+            <span id="dupHeaderLabel"></span>
+          </label>
+        </div>
       </fieldset>
       <div id="preview" class="preview">
         <div class="preview-name" id="previewName"></div>
@@ -287,6 +381,7 @@
       </div>
       <div id="bar" class="bar" aria-hidden="true"><span id="barFill"></span></div>
       <div id="status" class="status"></div>
+      <div id="report" class="report"></div>
     </div>
     <ul class="hints">
       <li id="hint1"></li>
@@ -295,6 +390,7 @@
     </ul>
   </div>
   <input id="file" type="file" accept=".csv,text/csv" />
+  <input id="folder" type="file" webkitdirectory directory multiple />
 
   <script>
     (function () {
@@ -302,8 +398,14 @@
 
       var XML_BATCH = 65536;
       var EXCEL_MAX_ROWS = 1048576;
+      var DUP_SHOW = 200;
+      var ROW_SEP = "\u001f";
       var busy = false;
+      var mode = "split";
       var selectedFile = null;
+      var selectedXlsx = [];
+      var folderLabel = "";
+      var lastReport = null;
       var skippedExtra = false;
       var lang = "zh";
       var statusKind = "";
@@ -351,7 +453,47 @@
           noHeader: "讀不到表頭，請確認這是文字 CSV 檔。",
           noData: "這個檔案沒有資料。",
           memory: "記憶體不足。請關閉其他分頁後再試，或把 CSV 先切小一點。",
-          sheetName: "資料"
+          sheetName: "資料",
+          modeSplit: "切檔",
+          modeDup: "找重複",
+          titleDup: "掃描資料夾裡的 Excel，找出重複資料",
+          docTitleDup: "Excel 找重複",
+          leadDup: "不必安裝任何程式。把資料夾拖進來，讀取裡面所有 Excel。結果只顯示在這個畫面，不會另存檔。",
+          dropTitleDup: "把資料夾拖到這裡",
+          dropSubDup: "或按下面按鈕選擇資料夾。會讀取裡面所有 .xlsx（含子資料夾）。",
+          pickDup: "選擇資料夾",
+          startDup: "開始掃描",
+          clearDup: "換一個資料夾",
+          hint1Dup: "請用 Chrome、Edge、Safari 或 Firefox。檔案很多或很大時可能需要幾分鐘，請勿關閉分頁。",
+          hint2Dup: "會檢查整列是否相同，以及每一欄（例如序號、QR 連結）是否出現超過一次。",
+          hint3Dup: "結果只顯示在畫面上，不會另存檔。Excel 暫存檔（名稱以 ~$ 開頭）會自動略過。",
+          idleDup: "等待資料夾中。選好後會先預覽要掃描的 Excel，不會立刻開始。",
+          previewMetaDup: "找到 {files} 個 Excel，合計 {size}。",
+          previewFilesDup: "包含：{names}",
+          previewFilesMoreDup: "包含：{names}…等 {files} 個檔",
+          dupHeaderLabel: "第一列是表頭",
+          needXlsx: "這個資料夾裡沒有可掃描的 .xlsx 檔。",
+          needFolder: "請拖入資料夾，或一次拖入一個以上的 .xlsx 檔。",
+          startScanMsg: "開始掃描 {files} 個 Excel。檔案很大時可能需要幾分鐘，請勿關閉這個分頁。",
+          progressDup: "已讀 {done}/{total} 檔　已處理 {rows} 列",
+          progressFile: "正在讀「{name}」…",
+          scanDone: "掃描完成。{files} 個檔、{rows} 列。",
+          noDup: "沒有找到重複資料。",
+          reportTitle: "掃描結果",
+          summaryFiles: "{n} 個檔",
+          summaryRows: "{n} 列",
+          summaryRowDup: "整列重複 {n} 組",
+          summaryColDup: "「{name}」重複 {n} 組",
+          dupRowTitle: "整列重複（{n} 組）",
+          dupColTitle: "「{name}」重複（{n} 組）",
+          dupCount: "出現 {count} 次",
+          dupFiles: "出現在：{files}",
+          dupMore: "還有 {n} 組未顯示（只先列出前 {limit} 組）",
+          failedTitle: "有 {n} 個檔讀取失敗，已略過並繼續掃描其他檔。",
+          notZip: "這不是有效的 Excel（xlsx）檔。",
+          noSheet: "找不到工作表。",
+          unsupportedZip: "這個 Excel 的壓縮格式無法讀取。",
+          colFallback: "欄 {n}"
         },
         en: {
           title: "Split a large CSV into Excel files",
@@ -392,18 +534,60 @@
           noHeader: "Could not read a header row. Please make sure this is a text CSV file.",
           noData: "This file has no data rows.",
           memory: "Not enough memory. Close other tabs and try again, or split the CSV into a smaller file first.",
-          sheetName: "Data"
+          sheetName: "Data",
+          modeSplit: "Split",
+          modeDup: "Find duplicates",
+          titleDup: "Scan a folder of Excel files for duplicates",
+          docTitleDup: "Find Excel duplicates",
+          leadDup: "No install needed. Drop a folder to read every Excel file inside. Results stay on this page — nothing is saved.",
+          dropTitleDup: "Drop a folder here",
+          dropSubDup: "Or click the button to choose a folder. Every .xlsx inside is included, including subfolders.",
+          pickDup: "Choose folder",
+          startDup: "Start scan",
+          clearDup: "Choose another folder",
+          hint1Dup: "Use Chrome, Edge, Safari, or Firefox. Many or large files can take a few minutes. Do not close this tab.",
+          hint2Dup: "The scan flags identical whole rows, and any column value (such as serial numbers or QR links) that appears more than once.",
+          hint3Dup: "Results are shown on screen only. Excel lock files (names starting with ~$) are skipped.",
+          idleDup: "Waiting for a folder. After you choose one, you will see a preview of the Excel files — it will not start yet.",
+          previewMetaDup: "Found {files} Excel file(s), {size} in total.",
+          previewFilesDup: "Includes: {names}",
+          previewFilesMoreDup: "Includes: {names}… and {files} files in total",
+          dupHeaderLabel: "First row is the header",
+          needXlsx: "This folder has no .xlsx files to scan.",
+          needFolder: "Please drop a folder, or drop one or more .xlsx files.",
+          startScanMsg: "Scanning {files} Excel file(s). Large files can take a few minutes. Do not close this tab.",
+          progressDup: "Read {done}/{total} file(s)   {rows} rows processed",
+          progressFile: "Reading “{name}”…",
+          scanDone: "Scan finished. {files} file(s), {rows} rows.",
+          noDup: "No duplicate data found.",
+          reportTitle: "Scan results",
+          summaryFiles: "{n} file(s)",
+          summaryRows: "{n} rows",
+          summaryRowDup: "{n} duplicate row group(s)",
+          summaryColDup: "“{name}”: {n} duplicate group(s)",
+          dupRowTitle: "Duplicate rows ({n} groups)",
+          dupColTitle: "“{name}” duplicates ({n} groups)",
+          dupCount: "Seen {count} times",
+          dupFiles: "Found in: {files}",
+          dupMore: "{n} more group(s) not shown (first {limit} only)",
+          failedTitle: "{n} file(s) could not be read. They were skipped, and the rest were scanned.",
+          notZip: "This is not a valid Excel (.xlsx) file.",
+          noSheet: "No worksheet was found.",
+          unsupportedZip: "This Excel file uses a compression method that cannot be read.",
+          colFallback: "Column {n}"
         }
       };
 
       var drop = document.getElementById("drop");
       var pick = document.getElementById("pick");
       var fileInput = document.getElementById("file");
+      var folderInput = document.getElementById("folder");
       var statusEl = document.getElementById("status");
       var bar = document.getElementById("bar");
       var barFill = document.getElementById("barFill");
       var settings = document.getElementById("settings");
       var includeHeaderEl = document.getElementById("includeHeader");
+      var dupHeaderEl = document.getElementById("dupHeader");
       var customRowsEl = document.getElementById("customRows");
       var preview = document.getElementById("preview");
       var previewName = document.getElementById("previewName");
@@ -412,6 +596,9 @@
       var clearBtn = document.getElementById("clearBtn");
       var langZh = document.getElementById("langZh");
       var langEn = document.getElementById("langEn");
+      var modeSplitBtn = document.getElementById("modeSplit");
+      var modeDupBtn = document.getElementById("modeDup");
+      var reportEl = document.getElementById("report");
       var encoder = new TextEncoder();
 
       function t(key) {
@@ -434,30 +621,40 @@
       }
 
       function applyI18n() {
+        var dup = mode === "dup";
+        document.body.setAttribute("data-mode", mode);
         document.documentElement.lang = lang === "en" ? "en" : "zh-Hant";
-        document.title = t("docTitle");
-        document.getElementById("title").textContent = t("title");
-        document.getElementById("lead").textContent = t("lead");
-        document.getElementById("dropTitle").textContent = t("dropTitle");
-        document.getElementById("dropSub").textContent = t("dropSub");
-        drop.setAttribute("aria-label", t("dropTitle"));
-        pick.textContent = t("pick");
+        document.title = t(dup ? "docTitleDup" : "docTitle");
+        document.getElementById("title").textContent = t(dup ? "titleDup" : "title");
+        document.getElementById("lead").textContent = t(dup ? "leadDup" : "lead");
+        document.getElementById("dropTitle").textContent = t(dup ? "dropTitleDup" : "dropTitle");
+        document.getElementById("dropSub").textContent = t(dup ? "dropSubDup" : "dropSub");
+        drop.setAttribute("aria-label", t(dup ? "dropTitleDup" : "dropTitle"));
+        pick.textContent = t(dup ? "pickDup" : "pick");
         document.getElementById("rowsLabel").textContent = t("rowsLabel");
         document.getElementById("rows100k").textContent = t("rows100k");
         document.getElementById("rows500k").textContent = t("rows500k");
         document.getElementById("rows1m").textContent = t("rows1m");
         document.getElementById("rowsCustom").textContent = t("rowsCustom");
         document.getElementById("headerLabel").textContent = t("headerLabel");
-        startBtn.textContent = t("start");
-        clearBtn.textContent = t("clear");
-        document.getElementById("hint1").textContent = t("hint1");
-        document.getElementById("hint2").textContent = t("hint2");
-        document.getElementById("hint3").textContent = t("hint3");
+        document.getElementById("dupHeaderLabel").textContent = t("dupHeaderLabel");
+        startBtn.textContent = t(dup ? "startDup" : "start");
+        clearBtn.textContent = t(dup ? "clearDup" : "clear");
+        document.getElementById("hint1").textContent = t(dup ? "hint1Dup" : "hint1");
+        document.getElementById("hint2").textContent = t(dup ? "hint2Dup" : "hint2");
+        document.getElementById("hint3").textContent = t(dup ? "hint3Dup" : "hint3");
+        modeSplitBtn.textContent = t("modeSplit");
+        modeDupBtn.textContent = t("modeDup");
+        modeSplitBtn.className = dup ? "" : "active";
+        modeDupBtn.className = dup ? "active" : "";
+        modeSplitBtn.setAttribute("aria-selected", dup ? "false" : "true");
+        modeDupBtn.setAttribute("aria-selected", dup ? "true" : "false");
         langZh.className = lang === "zh" ? "active" : "";
         langEn.className = lang === "en" ? "active" : "";
         customRowsEl.placeholder = t("rowsCustom");
         renderPreview();
         renderStatus();
+        renderReport();
       }
 
       function detectLang() {
@@ -486,14 +683,25 @@
       function renderStatus() {
         var text;
         if (progressSnap) {
-          text =
-            t("progressWarn") + "\n" +
-            progressSnap.msg + "\n" +
-            tf("progressStats", {
-              pct: progressSnap.pct,
-              rows: progressSnap.rows.toLocaleString(locale()),
-              parts: String(progressSnap.parts)
-            });
+          if (progressSnap.kind === "dup") {
+            text =
+              t("progressWarn") + "\n" +
+              progressSnap.msg + "\n" +
+              tf("progressDup", {
+                done: String(progressSnap.done),
+                total: String(progressSnap.total),
+                rows: progressSnap.rows.toLocaleString(locale())
+              });
+          } else {
+            text =
+              t("progressWarn") + "\n" +
+              progressSnap.msg + "\n" +
+              tf("progressStats", {
+                pct: progressSnap.pct,
+                rows: progressSnap.rows.toLocaleString(locale()),
+                parts: String(progressSnap.parts)
+              });
+          }
         } else {
           var vars = statusVars;
           if (statusVars.rowsRaw != null) {
@@ -503,7 +711,17 @@
               zip: statusVars.zip || "",
               name: statusVars.name || "",
               max: statusVars.max || "",
-              msg: statusVars.msg || ""
+              msg: statusVars.msg || "",
+              files: statusVars.files != null ? String(statusVars.files) : "",
+              done: statusVars.done != null ? String(statusVars.done) : "",
+              total: statusVars.total != null ? String(statusVars.total) : ""
+            };
+          } else if (statusVars.files != null && statusVars.rowsRaw == null && statusKey === "startScanMsg") {
+            vars = { files: String(statusVars.files) };
+          } else if (statusKey === "scanDone") {
+            vars = {
+              files: String(statusVars.files || 0),
+              rows: Number(statusVars.rowsRaw != null ? statusVars.rowsRaw : statusVars.rows || 0).toLocaleString(locale())
             };
           }
           text = tf(statusKey, vars);
@@ -963,6 +1181,597 @@
         }
       }
 
+      function xmlUnescape(s) {
+        return String(s)
+          .replace(/&#x([0-9a-fA-F]+);/g, function (_, h) {
+            var n = parseInt(h, 16);
+            return n ? String.fromCharCode(n) : "";
+          })
+          .replace(/&#(\d+);/g, function (_, d) {
+            var n = Number(d);
+            return n ? String.fromCharCode(n) : "";
+          })
+          .replace(/&lt;/g, "<")
+          .replace(/&gt;/g, ">")
+          .replace(/&quot;/g, '"')
+          .replace(/&apos;/g, "'")
+          .replace(/&amp;/g, "&");
+      }
+
+      function xmlAttr(attrs, name) {
+        var re = new RegExp(
+          "(?:^|\\s)" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+          "\\s*=\\s*(?:\"([^\"]*)\"|'([^']*)')",
+          "i"
+        );
+        var m = String(attrs || "").match(re);
+        return m ? (m[1] != null ? m[1] : m[2]) : "";
+      }
+
+      function colIndexFromRef(ref) {
+        var n = 0;
+        for (var i = 0; i < ref.length; i++) {
+          var c = ref.charCodeAt(i);
+          if (c >= 65 && c <= 90) n = n * 26 + (c - 64);
+          else if (c >= 97 && c <= 122) n = n * 26 + (c - 96);
+          else break;
+        }
+        return n > 0 ? n - 1 : 0;
+      }
+
+      function extractTTexts(xml) {
+        var cleaned = String(xml)
+          .replace(/<rPh\b[\s\S]*?<\/rPh>/gi, "")
+          .replace(/<phoneticPr\b[^>]*\/>/gi, "");
+        var out = [];
+        var re = /<t\b[^>]*>([\s\S]*?)<\/t>/gi;
+        var m;
+        while ((m = re.exec(cleaned))) out.push(xmlUnescape(m[1]));
+        return out.join("");
+      }
+
+      function extractV(xml) {
+        var m = String(xml).match(/<v\b[^>]*>([\s\S]*?)<\/v>/i);
+        return m ? xmlUnescape(m[1]) : "";
+      }
+
+      function parseRowCells(rowXml, shared) {
+        var cells = [];
+        var re = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/gi;
+        var m;
+        var nextCol = 0;
+        while ((m = re.exec(rowXml))) {
+          var attrs = m[1] || "";
+          var inner = m[2] || "";
+          var ref = xmlAttr(attrs, "r");
+          var col = ref ? colIndexFromRef(ref) : nextCol;
+          var typ = xmlAttr(attrs, "t").toLowerCase();
+          var val = "";
+          if (typ === "inlinestr") val = extractTTexts(inner);
+          else if (typ === "s") {
+            var idx = Number(extractV(inner));
+            val = shared && idx >= 0 && shared[idx] != null ? String(shared[idx]) : "";
+          } else if (typ === "str") val = extractV(inner) || extractTTexts(inner);
+          else val = extractV(inner);
+          cells[col] = val;
+          nextCol = col + 1;
+        }
+        for (var i = 0; i < cells.length; i++) {
+          if (cells[i] == null) cells[i] = "";
+        }
+        return cells;
+      }
+
+      function parseZip(u8) {
+        var view = new DataView(u8.buffer, u8.byteOffset, u8.byteLength);
+        var eocd = -1;
+        var min = Math.max(0, u8.length - 65557);
+        for (var i = u8.length - 22; i >= min; i--) {
+          if (view.getUint32(i, true) === 0x06054b50) {
+            eocd = i;
+            break;
+          }
+        }
+        if (eocd < 0) throw new Error("NOT_ZIP");
+        var cdCount = view.getUint16(eocd + 10, true);
+        var cdOffset = view.getUint32(eocd + 16, true);
+        if (cdCount === 0xffff || cdOffset === 0xffffffff) throw new Error("UNSUPPORTED_ZIP");
+        var entries = {};
+        var pos = cdOffset;
+        for (var n = 0; n < cdCount; n++) {
+          if (view.getUint32(pos, true) !== 0x02014b50) throw new Error("NOT_ZIP");
+          var method = view.getUint16(pos + 10, true);
+          var compressedSize = view.getUint32(pos + 20, true);
+          var nameLen = view.getUint16(pos + 28, true);
+          var extraLen = view.getUint16(pos + 30, true);
+          var commentLen = view.getUint16(pos + 32, true);
+          var localOffset = view.getUint32(pos + 42, true);
+          if (compressedSize === 0xffffffff || localOffset === 0xffffffff) {
+            throw new Error("UNSUPPORTED_ZIP");
+          }
+          var name = new TextDecoder("utf-8")
+            .decode(u8.subarray(pos + 46, pos + 46 + nameLen))
+            .replace(/\\/g, "/")
+            .replace(/^\//, "");
+          var rec = { method: method, compressedSize: compressedSize, localOffset: localOffset };
+          entries[name] = rec;
+          var low = name.toLowerCase();
+          if (low !== name) entries[low] = rec;
+          pos += 46 + nameLen + extraLen + commentLen;
+        }
+        return { u8: u8, view: view, entries: entries };
+      }
+
+      function zipEntryBytes(zip, path) {
+        var rec = zip.entries[path] || zip.entries[String(path).toLowerCase()];
+        if (!rec) return null;
+        var off = rec.localOffset;
+        if (zip.view.getUint32(off, true) !== 0x04034b50) throw new Error("NOT_ZIP");
+        var nameLen = zip.view.getUint16(off + 26, true);
+        var extraLen = zip.view.getUint16(off + 28, true);
+        var start = off + 30 + nameLen + extraLen;
+        return {
+          method: rec.method,
+          data: zip.u8.subarray(start, start + rec.compressedSize)
+        };
+      }
+
+      function zipHas(zip, path) {
+        return !!(zip.entries[path] || zip.entries[String(path).toLowerCase()]);
+      }
+
+      async function inflateEntry(entry) {
+        if (!entry) return null;
+        if (entry.method === 0) return entry.data;
+        if (entry.method !== 8) throw new Error("UNSUPPORTED_ZIP");
+        if (typeof DecompressionStream !== "function") throw new Error("OLD_BROWSER");
+        var stream = new Blob([entry.data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+        var reader = stream.getReader();
+        var parts = [];
+        var total = 0;
+        while (true) {
+          var step = await reader.read();
+          if (step.done) break;
+          parts.push(step.value);
+          total += step.value.length;
+        }
+        var out = new Uint8Array(total);
+        var o = 0;
+        for (var i = 0; i < parts.length; i++) {
+          out.set(parts[i], o);
+          o += parts[i].length;
+        }
+        return out;
+      }
+
+      async function zipText(zip, path) {
+        var entry = zipEntryBytes(zip, path);
+        if (!entry) return "";
+        var bytes = await inflateEntry(entry);
+        return new TextDecoder("utf-8").decode(bytes);
+      }
+
+      async function inflateToTextChunks(entry, onText) {
+        var decoder = new TextDecoder("utf-8");
+        if (entry.method === 0) {
+          var pos = 0;
+          var size = 1 << 20;
+          while (pos < entry.data.length) {
+            await onText(decoder.decode(entry.data.subarray(pos, pos + size), { stream: true }));
+            pos += size;
+            await maybeYield();
+          }
+          var tail = decoder.decode();
+          if (tail) await onText(tail);
+          return;
+        }
+        if (entry.method !== 8) throw new Error("UNSUPPORTED_ZIP");
+        if (typeof DecompressionStream !== "function") throw new Error("OLD_BROWSER");
+        var stream = new Blob([entry.data]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
+        var reader = stream.getReader();
+        while (true) {
+          var step = await reader.read();
+          if (step.done) {
+            var end = decoder.decode();
+            if (end) await onText(end);
+            break;
+          }
+          await onText(decoder.decode(step.value, { stream: true }));
+        }
+      }
+
+      function findTagOpen(buf, tag, from) {
+        var token = "<" + tag;
+        var i = from || 0;
+        while (i < buf.length) {
+          var p = buf.indexOf(token, i);
+          var ns = false;
+          if (p === -1) {
+            var p2 = buf.indexOf(":" + tag, i);
+            if (p2 === -1) return -1;
+            var lt = buf.lastIndexOf("<", p2);
+            if (lt === -1 || p2 - lt > 14) {
+              i = p2 + 1;
+              continue;
+            }
+            p = lt;
+            ns = true;
+          }
+          var after = ns ? buf.indexOf(tag, p) + tag.length : p + token.length;
+          var c = buf.charCodeAt(after);
+          if (c === 32 || c === 9 || c === 10 || c === 13 || c === 62 || c === 47) return p;
+          i = p + 1;
+        }
+        return -1;
+      }
+
+      function findTagClose(buf, tag, from) {
+        var token = "</" + tag + ">";
+        var p = buf.indexOf(token, from);
+        if (p !== -1) return { at: p, len: token.length };
+        var needle = ":" + tag + ">";
+        var p2 = buf.indexOf(needle, from);
+        while (p2 !== -1) {
+          var lt = buf.lastIndexOf("</", p2);
+          if (lt !== -1 && lt >= from && p2 - lt < 16) {
+            return { at: lt, len: p2 + tag.length + 1 - lt };
+          }
+          p2 = buf.indexOf(needle, p2 + 1);
+        }
+        return null;
+      }
+
+      function XmlTagReader(tag) {
+        this.tag = tag;
+        this.buf = "";
+      }
+
+      XmlTagReader.prototype.push = function (text, onTag) {
+        this.buf += text;
+        var buf = this.buf;
+        var tag = this.tag;
+        while (true) {
+          var start = findTagOpen(buf, tag, 0);
+          if (start === -1) {
+            this.buf = buf.length > 32 ? buf.slice(-16) : buf;
+            return;
+          }
+          if (start > 0) buf = buf.slice(start);
+          var gt = buf.indexOf(">");
+          if (gt === -1) {
+            this.buf = buf;
+            return;
+          }
+          if (buf.charAt(gt - 1) === "/") {
+            onTag("");
+            buf = buf.slice(gt + 1);
+            continue;
+          }
+          var close = findTagClose(buf, tag, gt);
+          if (!close) {
+            if (buf.length > 4 * 1024 * 1024) buf = buf.slice(1024 * 1024);
+            this.buf = buf;
+            return;
+          }
+          onTag(buf.slice(0, close.at + close.len));
+          buf = buf.slice(close.at + close.len);
+        }
+      };
+
+      XmlTagReader.prototype.flush = function (onTag) {
+        if (!this.buf) return;
+        var start = findTagOpen(this.buf, this.tag, 0);
+        if (start !== -1) {
+          var gt = this.buf.indexOf(">", start);
+          if (gt !== -1 && this.buf.charAt(gt - 1) === "/") onTag("");
+        }
+        this.buf = "";
+      };
+
+      function resolveXlTarget(target) {
+        var p = String(target || "").replace(/\\/g, "/").replace(/^\.\//, "");
+        if (!p) return "";
+        if (p.charAt(0) === "/") return p.replace(/^\/+/, "");
+        if (p.indexOf("xl/") === 0) return p;
+        return "xl/" + p;
+      }
+
+      async function firstSheetEntry(zip) {
+        var relsXml = zipHas(zip, "xl/_rels/workbook.xml.rels")
+          ? await zipText(zip, "xl/_rels/workbook.xml.rels")
+          : "";
+        var wbXml = zipHas(zip, "xl/workbook.xml") ? await zipText(zip, "xl/workbook.xml") : "";
+        var rels = {};
+        var rm = /<Relationship\b([^>]*)\/?>/gi;
+        var m;
+        while ((m = rm.exec(relsXml))) {
+          rels[xmlAttr(m[1], "Id")] = {
+            type: xmlAttr(m[1], "Type"),
+            target: xmlAttr(m[1], "Target")
+          };
+        }
+        var sm = /<sheet\b([^>]*)\/?>/gi;
+        while ((m = sm.exec(wbXml))) {
+          var rid = xmlAttr(m[1], "r:id") || xmlAttr(m[1], "r:Id");
+          var rel = rels[rid];
+          if (rel && /worksheet/i.test(rel.type)) {
+            var path = resolveXlTarget(rel.target);
+            var entry = zipEntryBytes(zip, path);
+            if (entry) return entry;
+          }
+        }
+        var seen = {};
+        var names = Object.keys(zip.entries);
+        for (var i = 0; i < names.length; i++) {
+          var nm = names[i];
+          var low = nm.toLowerCase();
+          if (seen[low]) continue;
+          seen[low] = true;
+          if (/^xl\/worksheets\/.+\.xml$/i.test(nm)) return zipEntryBytes(zip, nm);
+        }
+        throw new Error("NO_SHEET");
+      }
+
+      function addHit(map, key, fileIdx) {
+        var rec = map.get(key);
+        if (!rec) {
+          map.set(key, { c: 1, f: [fileIdx] });
+        } else {
+          rec.c += 1;
+          if (rec.f[rec.f.length - 1] !== fileIdx) rec.f.push(fileIdx);
+        }
+      }
+
+      function rowKey(cells) {
+        var end = cells.length;
+        while (end > 0 && String(cells[end - 1]) === "") end--;
+        if (!end) return "";
+        return cells.slice(0, end).join(ROW_SEP);
+      }
+
+      async function scanOneXlsx(file, fileIdx, ctx) {
+        var buf = new Uint8Array(await file.arrayBuffer());
+        var zip = parseZip(buf);
+        var shared = [];
+        var sst = zipEntryBytes(zip, "xl/sharedStrings.xml");
+        if (sst) {
+          var siReader = new XmlTagReader("si");
+          await inflateToTextChunks(sst, function (text) {
+            siReader.push(text, function (xml) {
+              shared.push(extractTTexts(xml));
+            });
+          });
+          siReader.flush(function (xml) {
+            if (xml) shared.push(extractTTexts(xml));
+          });
+        }
+        var sheet = await firstSheetEntry(zip);
+        var rowReader = new XmlTagReader("row");
+        var first = true;
+
+        function consumeRow(xml) {
+          if (!xml) return false;
+          var cells = parseRowCells(xml, shared);
+          if (first && ctx.useHeader) {
+            first = false;
+            if (!ctx.headerLocked) {
+              ctx.headers = [];
+              for (var h = 0; h < cells.length; h++) ctx.headers.push(String(cells[h] || "").trim());
+              ctx.headerLocked = true;
+            }
+            return false;
+          }
+          first = false;
+          var key = rowKey(cells);
+          if (!key) return false;
+          ctx.totalRows += 1;
+          addHit(ctx.rowMap, key, fileIdx);
+          for (var c = 0; c < cells.length; c++) {
+            var val = String(cells[c] == null ? "" : cells[c]).trim();
+            if (!val) continue;
+            if (!ctx.colMaps[c]) {
+              ctx.colMaps[c] = {
+                name: ctx.headers[c] ? String(ctx.headers[c]).trim() : "",
+                map: new Map()
+              };
+            }
+            addHit(ctx.colMaps[c].map, val, fileIdx);
+          }
+          if ((ctx.totalRows & 8191) === 0) {
+            if (ctx.onProgress) ctx.onProgress();
+            return true;
+          }
+          return false;
+        }
+
+        await inflateToTextChunks(sheet, async function (text) {
+          var batch = [];
+          rowReader.push(text, function (xml) { batch.push(xml); });
+          for (var i = 0; i < batch.length; i++) {
+            if (consumeRow(batch[i])) await maybeYield();
+          }
+        });
+        var leftover = [];
+        rowReader.flush(function (xml) { leftover.push(xml); });
+        for (var j = 0; j < leftover.length; j++) {
+          if (consumeRow(leftover[j])) await maybeYield();
+        }
+      }
+
+      function collectDupGroups(map) {
+        var groups = [];
+        map.forEach(function (rec, key) {
+          if (rec.c > 1) groups.push({ key: key, count: rec.c, files: rec.f.slice() });
+        });
+        groups.sort(function (a, b) {
+          if (b.count !== a.count) return b.count - a.count;
+          return a.key < b.key ? -1 : a.key > b.key ? 1 : 0;
+        });
+        return { total: groups.length, shown: groups.slice(0, DUP_SHOW) };
+      }
+
+      async function scanXlsxFiles(items, useHeader, onProgress) {
+        var ctx = {
+          useHeader: !!useHeader,
+          headerLocked: false,
+          headers: [],
+          rowMap: new Map(),
+          colMaps: [],
+          totalRows: 0,
+          onProgress: null
+        };
+        var failed = [];
+        var lastUi = 0;
+        for (var i = 0; i < items.length; i++) {
+          var item = items[i];
+          onProgress(Math.min(i + 1, items.length), items.length, ctx.totalRows, item.path);
+          ctx.onProgress = function () {
+            var now = performance.now();
+            if (now - lastUi < 250) return;
+            lastUi = now;
+            onProgress(Math.min(i + 1, items.length), items.length, ctx.totalRows, item.path);
+          };
+          try {
+            await scanOneXlsx(item.file, i, ctx);
+          } catch (err) {
+            failed.push({ path: item.path, msg: mapError(err) });
+          }
+          await maybeYield();
+        }
+        onProgress(items.length, items.length, ctx.totalRows, items.length ? items[items.length - 1].path : "");
+        var columns = [];
+        for (var c = 0; c < ctx.colMaps.length; c++) {
+          var col = ctx.colMaps[c];
+          if (!col) continue;
+          var dups = collectDupGroups(col.map);
+          columns.push({
+            name: col.name,
+            index: c,
+            total: dups.total,
+            shown: dups.shown
+          });
+        }
+        return {
+          files: items.length,
+          rows: ctx.totalRows,
+          failed: failed,
+          rowDups: collectDupGroups(ctx.rowMap),
+          columns: columns,
+          items: items
+        };
+      }
+
+      function colDisplayName(name, index) {
+        if (name) return name;
+        return tf("colFallback", { n: String(index + 1) });
+      }
+
+      function displayRowKey(key) {
+        return String(key).split(ROW_SEP).join(" | ");
+      }
+
+      function shorten(s, n) {
+        s = String(s);
+        if (s.length <= n) return s;
+        return s.slice(0, n) + "…";
+      }
+
+      function escapeHtml(s) {
+        return String(s)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;");
+      }
+
+      function fileNamesFromIdx(idxs, items) {
+        var names = [];
+        for (var i = 0; i < idxs.length; i++) {
+          var it = items[idxs[i]];
+          names.push(it ? it.path : String(idxs[i]));
+        }
+        return names.join(lang === "en" ? ", " : "、");
+      }
+
+      function renderDupItems(groups, keyFn, items) {
+        var html = "";
+        for (var i = 0; i < groups.shown.length; i++) {
+          var g = groups.shown[i];
+          var keyText = keyFn(g.key);
+          html +=
+            '<div class="dup-item"><div class="dup-key" title="' + escapeHtml(keyText) + '">' +
+            escapeHtml(shorten(keyText, 240)) + "</div>" +
+            '<div class="dup-meta">' + escapeHtml(tf("dupCount", { count: String(g.count) })) +
+            " · " + escapeHtml(tf("dupFiles", { files: fileNamesFromIdx(g.files, items) })) +
+            "</div></div>";
+        }
+        if (groups.total > groups.shown.length) {
+          html += '<div class="dup-more">' + escapeHtml(tf("dupMore", {
+            n: String(groups.total - groups.shown.length),
+            limit: String(DUP_SHOW)
+          })) + "</div>";
+        }
+        return html;
+      }
+
+      function hasAnyDup(report) {
+        if (!report) return false;
+        if (report.rowDups.total > 0) return true;
+        for (var i = 0; i < report.columns.length; i++) {
+          if (report.columns[i].total > 0) return true;
+        }
+        return false;
+      }
+
+      function renderReport() {
+        if (!lastReport || mode !== "dup") {
+          reportEl.classList.remove("show");
+          reportEl.innerHTML = "";
+          return;
+        }
+        var r = lastReport;
+        var items = r.items || [];
+        var html = "<h2>" + escapeHtml(t("reportTitle")) + "</h2>";
+        html += '<div class="summary-grid">';
+        html += '<span class="pill">' + escapeHtml(tf("summaryFiles", { n: String(r.files) })) + "</span>";
+        html += '<span class="pill">' + escapeHtml(tf("summaryRows", { n: r.rows.toLocaleString(locale()) })) + "</span>";
+        html += '<span class="pill">' + escapeHtml(tf("summaryRowDup", { n: String(r.rowDups.total) })) + "</span>";
+        for (var c = 0; c < r.columns.length; c++) {
+          var col = r.columns[c];
+          html += '<span class="pill">' + escapeHtml(tf("summaryColDup", {
+            name: colDisplayName(col.name, col.index),
+            n: String(col.total)
+          })) + "</span>";
+        }
+        html += "</div>";
+        if (!hasAnyDup(r)) {
+          html += '<p class="report-ok">' + escapeHtml(t("noDup")) + "</p>";
+        } else {
+          if (r.rowDups.total) {
+            html += '<div class="dup-block"><h3>' + escapeHtml(tf("dupRowTitle", { n: String(r.rowDups.total) })) + "</h3>";
+            html += renderDupItems(r.rowDups, displayRowKey, items) + "</div>";
+          }
+          for (var j = 0; j < r.columns.length; j++) {
+            var col2 = r.columns[j];
+            if (!col2.total) continue;
+            html += '<div class="dup-block"><h3>' + escapeHtml(tf("dupColTitle", {
+              name: colDisplayName(col2.name, col2.index),
+              n: String(col2.total)
+            })) + "</h3>";
+            html += renderDupItems(col2, function (k) { return k; }, items) + "</div>";
+          }
+        }
+        if (r.failed && r.failed.length) {
+          html += '<div class="fail-box"><div>' + escapeHtml(tf("failedTitle", { n: String(r.failed.length) })) + "</div><ul>";
+          for (var f = 0; f < r.failed.length; f++) {
+            html += "<li>" + escapeHtml(r.failed[f].path + " — " + r.failed[f].msg) + "</li>";
+          }
+          html += "</ul></div>";
+        }
+        reportEl.innerHTML = html;
+        reportEl.classList.add("show");
+      }
+
       async function processFile(file, rowsPerFile, includeHeader) {
         var decoder = new TextDecoder("utf-8");
         var csv = createCsvState();
@@ -1085,6 +1894,9 @@
         if (raw === "OLD_BROWSER") return t("oldBrowser");
         if (raw === "NO_HEADER") return t("noHeader");
         if (raw === "NO_DATA") return t("noData");
+        if (raw === "NOT_ZIP") return t("notZip");
+        if (raw === "NO_SHEET") return t("noSheet");
+        if (raw === "UNSUPPORTED_ZIP") return t("unsupportedZip");
         if (/memory|heap|allocation/i.test(raw)) return t("memory");
         return raw;
       }
@@ -1096,6 +1908,34 @@
       }
 
       function renderPreview() {
+        if (mode === "dup") {
+          if (!selectedXlsx.length) {
+            preview.classList.remove("show");
+            return;
+          }
+          preview.classList.add("show");
+          previewName.textContent = folderLabel || (selectedXlsx.length === 1
+            ? selectedXlsx[0].path
+            : tf("summaryFiles", { n: String(selectedXlsx.length) }));
+          var bytes = 0;
+          var names = [];
+          for (var i = 0; i < selectedXlsx.length; i++) {
+            bytes += selectedXlsx[i].file.size;
+            if (names.length < 8) names.push(selectedXlsx[i].path.split("/").pop());
+          }
+          var meta = tf("previewMetaDup", {
+            files: String(selectedXlsx.length),
+            size: formatSize(bytes)
+          });
+          var joined = names.join(lang === "en" ? ", " : "、");
+          if (selectedXlsx.length > names.length) {
+            meta += "\n" + tf("previewFilesMoreDup", { names: joined, files: String(selectedXlsx.length) });
+          } else {
+            meta += "\n" + tf("previewFilesDup", { names: joined });
+          }
+          previewMeta.textContent = meta;
+          return;
+        }
         if (!selectedFile) {
           preview.classList.remove("show");
           return;
@@ -1109,6 +1949,116 @@
         });
       }
 
+      function fileRelPath(file) {
+        return file._rel || file.webkitRelativePath || file.name || "";
+      }
+
+      function isTempExcelName(path) {
+        var base = String(path).split(/[/\\]/).pop() || "";
+        return base.indexOf("~$") === 0;
+      }
+
+      function isXlsxPath(path) {
+        return /\.xlsx$/i.test(path) && !isTempExcelName(path);
+      }
+
+      function readDirEntries(reader) {
+        return new Promise(function (resolve, reject) {
+          var all = [];
+          function next() {
+            reader.readEntries(function (batch) {
+              if (!batch.length) return resolve(all);
+              all.push.apply(all, batch);
+              next();
+            }, reject);
+          }
+          next();
+        });
+      }
+
+      function fileFromEntry(entry) {
+        return new Promise(function (resolve, reject) {
+          entry.file(function (file) {
+            var rel = String(entry.fullPath || file.name || "").replace(/^\//, "");
+            try {
+              Object.defineProperty(file, "_rel", { value: rel, configurable: true });
+            } catch (e) {
+              file._rel = rel;
+            }
+            resolve(file);
+          }, reject);
+        });
+      }
+
+      async function walkEntry(entry, out) {
+        if (!entry) return;
+        if (entry.isFile) {
+          out.push(await fileFromEntry(entry));
+          return;
+        }
+        if (entry.isDirectory) {
+          var kids = await readDirEntries(entry.createReader());
+          for (var i = 0; i < kids.length; i++) await walkEntry(kids[i], out);
+        }
+      }
+
+      async function filesFromDataTransfer(dt) {
+        if (!dt) return [];
+        var items = dt.items;
+        var entries = [];
+        if (items && items.length && items[0].webkitGetAsEntry) {
+          for (var i = 0; i < items.length; i++) {
+            var entry = items[i].webkitGetAsEntry && items[i].webkitGetAsEntry();
+            if (entry) entries.push(entry);
+          }
+        }
+        if (entries.length) {
+          var files = [];
+          for (var j = 0; j < entries.length; j++) await walkEntry(entries[j], files);
+          if (files.length) return files;
+        }
+        return Array.prototype.slice.call(dt.files || []);
+      }
+
+      function inferFolderLabel(items) {
+        if (!items.length) return "";
+        var first = items[0].path;
+        var slash = first.indexOf("/");
+        if (slash <= 0) return "";
+        var root = first.slice(0, slash);
+        for (var i = 1; i < items.length; i++) {
+          if (items[i].path !== root && items[i].path.indexOf(root + "/") !== 0) return "";
+        }
+        return root;
+      }
+
+      function chooseXlsx(files) {
+        lastReport = null;
+        var list = [];
+        for (var i = 0; i < files.length; i++) {
+          var f = files[i];
+          var p = String(fileRelPath(f)).replace(/\\/g, "/");
+          if (isXlsxPath(p)) list.push({ file: f, path: p });
+        }
+        if (!list.length) {
+          selectedXlsx = [];
+          folderLabel = "";
+          renderPreview();
+          renderReport();
+          setStatusKey("needXlsx", {}, "err");
+          return;
+        }
+        list.sort(function (a, b) {
+          return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+        });
+        selectedXlsx = list;
+        folderLabel = inferFolderLabel(list);
+        hideProgress();
+        renderPreview();
+        renderReport();
+        setStatusKey("idleDup");
+      }
+
       function clearFile() {
         selectedFile = null;
         skippedExtra = false;
@@ -1116,6 +2066,21 @@
         preview.classList.remove("show");
         hideProgress();
         setStatusKey("idle");
+      }
+
+      function clearSelection() {
+        if (mode === "dup") {
+          selectedXlsx = [];
+          folderLabel = "";
+          lastReport = null;
+          folderInput.value = "";
+          preview.classList.remove("show");
+          hideProgress();
+          renderReport();
+          setStatusKey("idleDup");
+          return;
+        }
+        clearFile();
       }
 
       function chooseFile(file, extra) {
@@ -1127,14 +2092,78 @@
         else setStatusKey("idle");
       }
 
+      function setMode(next) {
+        if (busy) return;
+        var nextMode = next === "dup" ? "dup" : "split";
+        if (mode === nextMode) return;
+        mode = nextMode;
+        hideProgress();
+        progressSnap = null;
+        if (mode === "dup") setStatusKey("idleDup");
+        else setStatusKey(selectedFile ? "idle" : "idle");
+        applyI18n();
+      }
+
       function lockUi(on) {
         busy = on;
         settings.disabled = on;
         pick.disabled = on;
         startBtn.disabled = on;
         clearBtn.disabled = on;
+        modeSplitBtn.disabled = on;
+        modeDupBtn.disabled = on;
         if (on) drop.classList.add("busy");
         else drop.classList.remove("busy");
+      }
+
+      function openPicker() {
+        if (busy) return;
+        if (mode === "dup") folderInput.click();
+        else fileInput.click();
+      }
+
+      async function startScan() {
+        if (busy) return;
+        if (!selectedXlsx.length) {
+          setStatusKey("needFolder", {}, "err");
+          return;
+        }
+        lockUi(true);
+        window.onbeforeunload = function () { return t("leave"); };
+        setProgress(1);
+        lastReport = null;
+        renderReport();
+        setStatusKey("startScanMsg", { files: selectedXlsx.length });
+        try {
+          var report = await scanXlsxFiles(selectedXlsx, dupHeaderEl.checked, function (done, total, rows, name) {
+            var pct = total ? Math.min(99, ((done + 0.2) / total) * 100) : 0;
+            setProgress(pct);
+            progressSnap = {
+              kind: "dup",
+              msg: tf("progressFile", { name: name || "" }),
+              done: done,
+              total: total,
+              rows: rows
+            };
+            statusKind = "";
+            renderStatus();
+          });
+          lastReport = report;
+          setProgress(100);
+          progressSnap = null;
+          var kind = report.failed.length && report.rows === 0 ? "err" : "ok";
+          setStatusKey("scanDone", {
+            files: report.files,
+            rowsRaw: report.rows
+          }, kind);
+          renderReport();
+        } catch (err) {
+          hideProgress();
+          setStatusKey("fail", { msg: mapError(err) }, "err");
+        } finally {
+          lockUi(false);
+          window.onbeforeunload = null;
+        }
       }
 
       async function startSplit() {
@@ -1178,6 +2207,27 @@
         chooseFile(csvs[0], list.length > 1);
       }
 
+      function handleIncoming(dt) {
+        Promise.resolve().then(function () {
+          if (busy) {
+            setStatusKey("busyWait");
+            return;
+          }
+          if (mode === "dup") {
+            return filesFromDataTransfer(dt).then(function (files) {
+              if (!files.length) {
+                setStatusKey("needFolder", {}, "err");
+                return;
+              }
+              chooseXlsx(files);
+            });
+          }
+          pickFromList(dt && dt.files);
+        }).catch(function (err) {
+          setStatusKey("fail", { msg: mapError(err) }, "err");
+        });
+      }
+
       drop.addEventListener("dragenter", function (e) {
         e.preventDefault();
         if (!busy) drop.classList.add("drag");
@@ -1192,42 +2242,49 @@
       drop.addEventListener("drop", function (e) {
         e.preventDefault();
         drop.classList.remove("drag");
-        pickFromList(e.dataTransfer && e.dataTransfer.files);
+        handleIncoming(e.dataTransfer);
       });
       document.addEventListener("dragover", function (e) { e.preventDefault(); });
       document.addEventListener("drop", function (e) {
         if (e.target === drop || drop.contains(e.target)) return;
         e.preventDefault();
-        pickFromList(e.dataTransfer && e.dataTransfer.files);
+        handleIncoming(e.dataTransfer);
       });
 
       pick.addEventListener("click", function (e) {
         e.preventDefault();
         e.stopPropagation();
-        if (!busy) fileInput.click();
+        openPicker();
       });
       drop.addEventListener("click", function (e) {
         if (e.target === pick) return;
-        if (!busy) fileInput.click();
+        openPicker();
       });
       drop.addEventListener("keydown", function (e) {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
-          if (!busy) fileInput.click();
+          openPicker();
         }
       });
       fileInput.addEventListener("change", function () {
         pickFromList(fileInput.files);
         fileInput.value = "";
       });
+      folderInput.addEventListener("change", function () {
+        chooseXlsx(Array.prototype.slice.call(folderInput.files || []));
+        folderInput.value = "";
+      });
       startBtn.addEventListener("click", function (e) {
         e.preventDefault();
-        startSplit();
+        if (mode === "dup") startScan();
+        else startSplit();
       });
       clearBtn.addEventListener("click", function (e) {
         e.preventDefault();
-        if (!busy) clearFile();
+        if (!busy) clearSelection();
       });
+      modeSplitBtn.addEventListener("click", function () { setMode("split"); });
+      modeDupBtn.addEventListener("click", function () { setMode("dup"); });
       document.querySelectorAll('input[name="rows"]').forEach(function (el) {
         el.addEventListener("change", function () {
           if (el.value === "custom") customRowsEl.focus();
@@ -1250,6 +2307,10 @@
       customRowsEl.value = "500000";
       lang = detectLang();
       applyI18n();
+
+      if (typeof globalThis !== "undefined" && globalThis.__DUP_TEST) {
+        globalThis.__scanXlsxFiles = scanXlsxFiles;
+      }
     })();
   </script>
 </body>
